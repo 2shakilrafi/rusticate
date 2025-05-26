@@ -2,10 +2,10 @@
 name = "rusticate"
 version = "0.1.0"
 edition = "2021"
-authors = ["Your Name <your@email.com>"]
+authors = ["Shakil Rafi <sarafi@uark.edu>"]
 description = "Rust-based reimplementation of abricate"
 license = "MIT"
-repository = "https://github.com/yourusername/rusticate"
+repository = "https://github.com/2shakilraf/rusticate"
 
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
@@ -19,6 +19,9 @@ thiserror = "1.0"             # Nice error messages
 which = "5.0"                 # Check for makeblastdb
 tempfile = "3.8"              # For temp dirs
 walkdir = "2.4"               # For db file discovery
+dirs = "5.0"
+
+
 
 [dev-dependencies]
 assert_cmd = "2.0"

@@ -1,5 +1,4 @@
 use crate::fasta::Contig;
-use std::fs::File;
 use std::io::{Write, BufReader, BufRead};
 use std::process::{Command, Stdio};
 use tempfile::NamedTempFile;

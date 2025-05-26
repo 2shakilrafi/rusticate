@@ -1,0 +1,8 @@
+[
+  {
+    "query_id": "contig2",
+    "subject_id": "geneY",
+    "identity": 100.0,
+    "aln_len": 36
+  }
+]
