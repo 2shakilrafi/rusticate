@@ -1,9 +1,16 @@
-use crate::fasta::Contig;
-use std::io::{Write, BufReader, BufRead};
-use std::process::{Command, Stdio};
-use tempfile::NamedTempFile;
+use std::collections::HashMap;
+use std::process::Command;
+use std::error::Error;
+use std::fs::{self, File};
+use std::io::{BufReader, BufRead};
+use std::io::Write;
 
-#[allow(dead_code)]
+
+pub struct Contig {
+    pub id: String,
+    pub seq: String,
+}
+
 pub struct BlastHit {
     pub query_id: String,
     pub subject_id: String,
@@ -17,54 +24,80 @@ pub struct BlastHit {
     pub s_end: usize,
     pub evalue: f64,
     pub bit_score: f64,
+
+    // NEW FIELDS
+    pub q_len: usize,
+    pub db_name: String,
 }
 
-/// Run BLASTN against the provided DB using given contigs.
-/// Returns vector of hits.
-pub fn run_blast(contigs: &[Contig], db: &str) -> Result<Vec<BlastHit>, Box<dyn std::error::Error>> {
-    // Write contigs to temp FASTA file
-    let mut temp_fasta = NamedTempFile::new()?;
-    for contig in contigs {
-        writeln!(temp_fasta, ">{}\n{}", contig.id, std::str::from_utf8(&contig.seq)?)?;
+pub fn run_blast(
+    contigs: &HashMap<String, Contig>,
+    db_path: &str,
+    db_name: &str,
+) -> Result<Vec<BlastHit>, Box<dyn Error>> {
+    // Write input FASTA to temp file
+    let tmp_fasta = "rusticate_tmp_input.fasta";
+    {
+        let mut f = File::create(tmp_fasta)?;
+        for contig in contigs.values() {
+            writeln!(f, ">{}\n{}", contig.id, contig.seq)?;
+        }
     }
 
-    // Output in tabular format
-    let blast_output = Command::new("blastn")
+    // Run BLAST
+    let tmp_out = "rusticate_tmp_blast.out";
+    let status = Command::new("blastn")
         .args([
-            "-query", temp_fasta.path().to_str().unwrap(),
-            "-db", db,
+            "-query", tmp_fasta,
+            "-db", db_path,
             "-outfmt", "6",
+            "-out", tmp_out,
         ])
-        .stdout(Stdio::piped())
-        .spawn()?
-        .stdout
-        .ok_or("Failed to capture BLAST output")?;
+        .status()?;
 
-    let reader = BufReader::new(blast_output);
+    if !status.success() {
+        return Err("❌ blastn failed".into());
+    }
+
+    // Parse BLAST output
+    let file = File::open(tmp_out)?;
+    let reader = BufReader::new(file);
     let mut hits = Vec::new();
 
     for line in reader.lines() {
         let line = line?;
         let fields: Vec<&str> = line.split('\t').collect();
-        if fields.len() != 12 {
-            continue; // Skip malformed lines
+        if fields.len() < 12 {
+            continue;
+        }
+
+        let query_id = fields[0].to_string();
+        let contig = contigs.get(&query_id);
+        if contig.is_none() {
+            continue;
         }
 
         hits.push(BlastHit {
-            query_id: fields[0].into(),
-            subject_id: fields[1].into(),
-            identity: fields[2].parse()?,
-            aln_len: fields[3].parse()?,
-            mismatches: fields[4].parse()?,
-            gap_opens: fields[5].parse()?,
-            q_start: fields[6].parse()?,
-            q_end: fields[7].parse()?,
-            s_start: fields[8].parse()?,
-            s_end: fields[9].parse()?,
-            evalue: fields[10].parse()?,
-            bit_score: fields[11].parse()?,
+            query_id: query_id.clone(),
+            subject_id: fields[1].to_string(),
+            identity: fields[2].parse::<f64>()?,
+            aln_len: fields[3].parse::<usize>()?,
+            mismatches: fields[4].parse::<usize>()?,
+            gap_opens: fields[5].parse::<usize>()?,
+            q_start: fields[6].parse::<usize>()?,
+            q_end: fields[7].parse::<usize>()?,
+            s_start: fields[8].parse::<usize>()?,
+            s_end: fields[9].parse::<usize>()?,
+            evalue: fields[10].parse::<f64>()?,
+            bit_score: fields[11].parse::<f64>()?,
+            q_len: contig.unwrap().seq.len(),
+            db_name: db_name.to_string(),
         });
     }
+
+    // Cleanup temp files
+    fs::remove_file(tmp_fasta).ok();
+    fs::remove_file(tmp_out).ok();
 
     Ok(hits)
 }

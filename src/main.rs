@@ -62,6 +62,10 @@ fn main() {
                 }
             };
 
+            report::write_results_tsv(&hits, &output, &fasta).unwrap();
+            println!("✅ Reports written to '{}/'\n    ├── results.tsv", output);
+
+
             for hit in hits.iter().take(5) {
                 println!(
                     "{} hit {} (identity: {:.2}%, len: {})",
@@ -69,10 +73,6 @@ fn main() {
                 );
             }
 
-            if let Err(e) = report::write_reports(&hits, &output) {
-                eprintln!("❌ Failed to write report: {}", e);
-                std::process::exit(1);
-            }
         }
     }
 }
