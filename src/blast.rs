@@ -3,6 +3,7 @@ use std::io::{Write, BufReader, BufRead};
 use std::process::{Command, Stdio};
 use tempfile::NamedTempFile;
 
+#[allow(dead_code)]
 pub struct BlastHit {
     pub query_id: String,
     pub subject_id: String,

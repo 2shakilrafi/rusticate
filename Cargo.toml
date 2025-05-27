@@ -14,13 +14,15 @@ serde_json = "1.0"
 flate2 = "1.0"                # For gz support
 rayon = "1.8"                 # Parallelism
 tera = "1.19"                 # HTML templating
-bio = "2.3"                # rust-bio for fasta
+bio = "2.3"                   # rust-bio for fasta
 thiserror = "1.0"             # Nice error messages
 which = "5.0"                 # Check for makeblastdb
 tempfile = "3.8"              # For temp dirs
 walkdir = "2.4"               # For db file discovery
+reqwest = { version = "0.11", features = ["blocking"] }
+tar = "0.4"
+bzip2 = "0.4"
 dirs = "5.0"
-
 
 
 [dev-dependencies]

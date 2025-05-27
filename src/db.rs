@@ -1,10 +1,12 @@
-use std::fs::{self, create_dir_all, File};
-use std::io::{Write, copy};
-use std::path::{Path, PathBuf};
+use std::fs::{create_dir_all, File};
+use std::io::{copy, Write};
+use std::path::PathBuf;
 use std::process::Command;
 use std::error::Error;
 
 use reqwest::blocking::get;
+use tar::Archive;
+use bzip2::read::BzDecoder;
 
 /// Return the path to the DB directory (~/.rusticate/db/<db_name>)
 pub fn get_db_path(db_name: &str) -> Result<PathBuf, Box<dyn Error>> {
@@ -12,18 +14,55 @@ pub fn get_db_path(db_name: &str) -> Result<PathBuf, Box<dyn Error>> {
     Ok(home.join(".rusticate").join("db").join(db_name))
 }
 
-/// Ensure the database has been indexed using `makeblastdb`
-pub fn ensure_blast_index(db_name: &str) -> Result<(), Box<dyn Error>> {
-    let db_dir = get_db_path(db_name)?;
-    let fasta_path = db_dir.join(format!("{}.fasta", db_name));
-    let nin_file = db_dir.join(format!("{}.nin", db_name)); // One of the output files from makeblastdb
+/// Download and install the CARD database from the official release archive
+pub fn download_card() -> Result<(), Box<dyn Error>> {
+    let db_name = "card";
+    let url = "https://card.mcmaster.ca/download/0/broadstreet-v4.0.0.tar.bz2";
+    let archive_name = "broadstreet-v4.0.0.tar.bz2";
+    let expected_filename = "nucleotide_fasta_protein_homolog_model.fasta";
 
-    if nin_file.exists() {
-        println!("📦 Database '{}' is already indexed.", db_name);
-        return Ok(()); // Already indexed
+    // Set up paths
+    let db_dir = get_db_path(db_name)?;
+    create_dir_all(&db_dir)?;
+
+    let tarball_path = db_dir.join(archive_name);
+    let fasta_path = db_dir.join("card.fasta");
+
+    // Step 1: Download the archive
+    println!("🌐 Downloading CARD database archive...");
+    let mut resp = get(url)?;
+    let mut out = File::create(&tarball_path)?;
+    copy(&mut resp, &mut out)?;
+    println!("✅ Downloaded to {:?}", tarball_path);
+
+    // Step 2: Extract and find the FASTA
+    println!("📦 Extracting archive...");
+    let tar_bz2 = File::open(&tarball_path)?;
+    let decompressor = BzDecoder::new(tar_bz2);
+    let mut archive = Archive::new(decompressor);
+
+    let mut found = false;
+    for entry in archive.entries()? {
+        let mut file = entry?;
+        let path = file.path()?.to_owned();
+
+        if let Some(fname) = path.file_name() {
+            if fname == expected_filename {
+                println!("📄 Found FASTA file: {:?}", path);
+                let mut out = File::create(&fasta_path)?;
+                copy(&mut file, &mut out)?;
+                found = true;
+                break;
+            }
+        }
     }
 
-    println!("🛠️  Indexing database '{}' with makeblastdb...", db_name);
+    if !found {
+        return Err(format!("❌ Could not find {} in archive", expected_filename).into());
+    }
+
+    // Step 3: Run makeblastdb
+    println!("🛠️  Indexing FASTA with makeblastdb...");
     let status = Command::new("makeblastdb")
         .args([
             "-in", fasta_path.to_str().unwrap(),
@@ -36,34 +75,11 @@ pub fn ensure_blast_index(db_name: &str) -> Result<(), Box<dyn Error>> {
         return Err("❌ makeblastdb failed".into());
     }
 
-    println!("✅ Indexed database '{}'", db_name);
-    Ok(())
-}
-
-/// Download and install the CARD database
-pub fn download_card() -> Result<(), Box<dyn Error>> {
-    let db_name = "card";
-    let url = "https://raw.githubusercontent.com/arpcard/card-data/master/data/nucleotide_fasta_protein_homolog_model.fasta";
-
-    let db_path = get_db_path(db_name)?;
-    create_dir_all(&db_path)?;
-
-    let fasta_path = db_path.join("card.fasta");
-
-    println!("🌐 Downloading CARD database from {}", url);
-    let mut resp = get(url)?;
-    let mut out = File::create(&fasta_path)?;
-    copy(&mut resp, &mut out)?;
-
-    println!("✅ Downloaded to {:?}", fasta_path);
-
-    ensure_blast_index(db_name)?;
-
-    // Write simple metadata
-    let meta_path = db_path.join("metadata.json");
+    // Step 4: Write metadata
+    let meta_path = db_dir.join("metadata.json");
     let mut meta = File::create(meta_path)?;
-    write!(meta, "{{\"source\": \"{}\"}}\n", url)?;
+    write!(meta, "{{\"source\": \"{}\", \"version\": \"4.0.0\"}}", url)?;
 
-    println!("✅ CARD database is ready at {:?}", db_path);
+    println!("✅ CARD v4.0.0 is ready at {:?}", db_dir);
     Ok(())
 }
