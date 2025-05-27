@@ -1,78 +1,86 @@
+use std::collections::HashMap;
+use clap::Parser;
+
 mod cli;
 mod fasta;
 mod blast;
-mod report;
 mod db;
+mod report;
 
-use clap::Parser;
 use cli::{Cli, Command};
 
 fn main() {
     let args = Cli::parse();
 
     match args.command {
-        Command::SetupDb { db } => {
-            match db.as_str() {
-                "card" => {
-                    if let Err(e) = db::download_card() {
-                        eprintln!("❌ Failed to download CARD: {}", e);
-                        std::process::exit(1);
-                    }
-                }
-                _ => {
-                    eprintln!("❌ Unsupported database: {}", db);
-                    std::process::exit(1);
-                }
-            }
-        }
-
         Command::Analyze {
             fasta,
             db,
-            min_identity,
-            min_coverage,
+            min_identity: _,
+            min_coverage: _,
             output,
         } => {
             println!("🧬 Running Rusticate with the following parameters:");
             println!("FASTA file: {}", fasta);
             println!("Database: {}", db);
-            println!("Minimum identity: {}%", min_identity);
-            println!("Minimum coverage: {}%", min_coverage);
             println!("Output directory: {}", output);
 
             let contigs = match fasta::read_fasta(&fasta) {
                 Ok(c) => {
                     println!("✅ Loaded {} contigs", c.len());
                     c
-                }
+                },
                 Err(e) => {
-                    eprintln!("❌ Error loading FASTA: {}", e);
+                    eprintln!("❌ Error reading FASTA: {}", e);
                     std::process::exit(1);
                 }
             };
 
-            let hits = match blast::run_blast(&contigs, &db) {
+            let contig_map: HashMap<String, fasta::Contig> = contigs
+                .into_iter()
+                .map(|c| (c.id.clone(), c))
+                .collect();
+
+            let db_name = db.split('/')
+                .last()
+                .unwrap_or("unknown")
+                .to_string();
+
+            let hits = match blast::run_blast(&contig_map, &db, &db_name) {
                 Ok(h) => {
                     println!("✅ BLAST returned {} hits", h.len());
+                    for h in h.iter().take(5) {
+                        println!(
+                            "{} hit {} (identity: {:.2}%, len: {})",
+                            h.query_id, h.subject_id, h.identity, h.aln_len
+                        );
+                    }
                     h
-                }
+                },
                 Err(e) => {
                     eprintln!("❌ Error running BLAST: {}", e);
                     std::process::exit(1);
                 }
             };
 
-            report::write_results_tsv(&hits, &output, &fasta).unwrap();
-            println!("✅ Reports written to '{}/'\n    ├── results.tsv", output);
-
-
-            for hit in hits.iter().take(5) {
-                println!(
-                    "{} hit {} (identity: {:.2}%, len: {})",
-                    hit.query_id, hit.subject_id, hit.identity, hit.aln_len
-                );
+            if let Err(e) = report::write_results_tsv(&hits, &output, &fasta) {
+                eprintln!("❌ Failed to write report: {}", e);
+                std::process::exit(1);
             }
 
+            println!("✅ Reports written to '{}/'\n    ├── results.tsv", output);
+        }
+
+        Command::SetupDb { db } => {
+            if db == "card" {
+                if let Err(e) = db::download_card() {
+                    eprintln!("❌ Failed to download CARD: {}", e);
+                    std::process::exit(1);
+                }
+            } else {
+                eprintln!("❌ Unknown database: {}", db);
+                std::process::exit(1);
+            }
         }
     }
 }

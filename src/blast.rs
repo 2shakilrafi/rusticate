@@ -2,15 +2,10 @@ use std::collections::HashMap;
 use std::process::Command;
 use std::error::Error;
 use std::fs::{self, File};
-use std::io::{BufReader, BufRead};
-use std::io::Write;
+use std::io::{BufReader, BufRead, Write};
+use crate::fasta::Contig; // 👈 use shared Contig struct
 
-
-pub struct Contig {
-    pub id: String,
-    pub seq: String,
-}
-
+#[allow(dead_code)]
 pub struct BlastHit {
     pub query_id: String,
     pub subject_id: String,
@@ -24,8 +19,6 @@ pub struct BlastHit {
     pub s_end: usize,
     pub evalue: f64,
     pub bit_score: f64,
-
-    // NEW FIELDS
     pub q_len: usize,
     pub db_name: String,
 }
@@ -35,16 +28,15 @@ pub fn run_blast(
     db_path: &str,
     db_name: &str,
 ) -> Result<Vec<BlastHit>, Box<dyn Error>> {
-    // Write input FASTA to temp file
     let tmp_fasta = "rusticate_tmp_input.fasta";
     {
         let mut f = File::create(tmp_fasta)?;
         for contig in contigs.values() {
-            writeln!(f, ">{}\n{}", contig.id, contig.seq)?;
+            writeln!(f, ">{}\n{}", contig.id, String::from_utf8_lossy(&contig.seq))?;
+
         }
     }
 
-    // Run BLAST
     let tmp_out = "rusticate_tmp_blast.out";
     let status = Command::new("blastn")
         .args([
@@ -59,7 +51,6 @@ pub fn run_blast(
         return Err("❌ blastn failed".into());
     }
 
-    // Parse BLAST output
     let file = File::open(tmp_out)?;
     let reader = BufReader::new(file);
     let mut hits = Vec::new();
@@ -72,10 +63,10 @@ pub fn run_blast(
         }
 
         let query_id = fields[0].to_string();
-        let contig = contigs.get(&query_id);
-        if contig.is_none() {
-            continue;
-        }
+        let contig = match contigs.get(&query_id) {
+            Some(c) => c,
+            None => continue,
+        };
 
         hits.push(BlastHit {
             query_id: query_id.clone(),
@@ -90,12 +81,11 @@ pub fn run_blast(
             s_end: fields[9].parse::<usize>()?,
             evalue: fields[10].parse::<f64>()?,
             bit_score: fields[11].parse::<f64>()?,
-            q_len: contig.unwrap().seq.len(),
+            q_len: contig.seq.len(),
             db_name: db_name.to_string(),
         });
     }
 
-    // Cleanup temp files
     fs::remove_file(tmp_fasta).ok();
     fs::remove_file(tmp_out).ok();
 
