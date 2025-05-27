@@ -1,11 +1,9 @@
 use std::collections::HashMap;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::error::Error;
-use std::fs::{self, File};
-use std::io::{BufReader, BufRead, Write};
-use crate::fasta::Contig; // 👈 use shared Contig struct
+use std::io::{Write, BufReader, BufRead};
+use crate::fasta::Contig;
 
-#[allow(dead_code)]
 pub struct BlastHit {
     pub query_id: String,
     pub subject_id: String,
@@ -28,31 +26,37 @@ pub fn run_blast(
     db_path: &str,
     db_name: &str,
 ) -> Result<Vec<BlastHit>, Box<dyn Error>> {
-    let tmp_fasta = "rusticate_tmp_input.fasta";
-    {
-        let mut f = File::create(tmp_fasta)?;
-        for contig in contigs.values() {
-            writeln!(f, ">{}\n{}", contig.id, String::from_utf8_lossy(&contig.seq))?;
-
-        }
+    // 🧬 Create FASTA in memory
+    let mut fasta_input = String::new();
+    for contig in contigs.values() {
+        fasta_input.push_str(&format!(
+            ">{}\n{}\n",
+            contig.id,
+            String::from_utf8_lossy(&contig.seq)
+        ));
     }
 
-    let tmp_out = "rusticate_tmp_blast.out";
-    let status = Command::new("blastn")
+    // 🚀 Start blastn subprocess
+    let mut child = Command::new("blastn")
         .args([
-            "-query", tmp_fasta,
             "-db", db_path,
             "-outfmt", "6",
-            "-out", tmp_out,
+            "-task", "megablast",
+            "-num_threads", "4",
         ])
-        .status()?;
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()?;
 
-    if !status.success() {
-        return Err("❌ blastn failed".into());
+    // 🔄 Write to stdin
+    {
+        let stdin = child.stdin.as_mut().ok_or("Failed to open stdin")?;
+        stdin.write_all(fasta_input.as_bytes())?;
     }
 
-    let file = File::open(tmp_out)?;
-    let reader = BufReader::new(file);
+    // 📥 Read from stdout
+    let stdout = child.stdout.take().ok_or("Failed to open stdout")?;
+    let reader = BufReader::new(stdout);
     let mut hits = Vec::new();
 
     for line in reader.lines() {
@@ -69,7 +73,7 @@ pub fn run_blast(
         };
 
         hits.push(BlastHit {
-            query_id: query_id.clone(),
+            query_id,
             subject_id: fields[1].to_string(),
             identity: fields[2].parse::<f64>()?,
             aln_len: fields[3].parse::<usize>()?,
@@ -86,8 +90,10 @@ pub fn run_blast(
         });
     }
 
-    fs::remove_file(tmp_fasta).ok();
-    fs::remove_file(tmp_out).ok();
+    let status = child.wait()?;
+    if !status.success() {
+        return Err("❌ blastn exited with non-zero status".into());
+    }
 
     Ok(hits)
 }
